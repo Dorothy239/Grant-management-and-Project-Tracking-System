@@ -1,9 +1,10 @@
 -- =====================================================
 -- COMPLETE DATABASE SCHEMA FOR STARTUP GRANT MANAGEMENT
--- Run this ENTIRE script in Supabase SQL Editor
+-- Non-destructive setup/update script for Supabase SQL Editor
+-- Safe to run without dropping application data
 -- =====================================================
 
--- 1. DROP EVERYTHING FIRST (clean slate)
+-- 1. REFRESH RECREATABLE OBJECTS ONLY
 DROP POLICY IF EXISTS "Anyone can view profiles" ON public.profiles;
 DROP POLICY IF EXISTS "Users can update their own profile" ON public.profiles;
 DROP POLICY IF EXISTS "Users can insert their own profile" ON public.profiles;
@@ -36,36 +37,38 @@ DROP TRIGGER IF EXISTS set_profiles_updated_at ON public.profiles;
 DROP TRIGGER IF EXISTS set_startups_updated_at ON public.startups;
 DROP TRIGGER IF EXISTS set_budgets_updated_at ON public.budgets;
 
-DROP FUNCTION IF EXISTS public.handle_new_user() CASCADE;
-DROP FUNCTION IF EXISTS public.handle_updated_at() CASCADE;
-DROP FUNCTION IF EXISTS public.has_role(app_role) CASCADE;
-DROP FUNCTION IF EXISTS public.is_startup_member(uuid) CASCADE;
-
-DROP TABLE IF EXISTS public.activity_log CASCADE;
-DROP TABLE IF EXISTS public.messages CASCADE;
-DROP TABLE IF EXISTS public.documents CASCADE;
-DROP TABLE IF EXISTS public.expenditures CASCADE;
-DROP TABLE IF EXISTS public.tasks CASCADE;
-DROP TABLE IF EXISTS public.budgets CASCADE;
-DROP TABLE IF EXISTS public.startup_members CASCADE;
-DROP TABLE IF EXISTS public.startups CASCADE;
-DROP TABLE IF EXISTS public.user_roles CASCADE;
-DROP TABLE IF EXISTS public.profiles CASCADE;
-
-DROP TYPE IF EXISTS public.app_role CASCADE;
-DROP TYPE IF EXISTS public.budget_status CASCADE;
-DROP TYPE IF EXISTS public.task_status CASCADE;
-DROP TYPE IF EXISTS public.task_priority CASCADE;
-
 -- 2. CREATE ENUMS
-CREATE TYPE public.app_role AS ENUM ('admin', 'student');
-CREATE TYPE public.budget_status AS ENUM ('pending', 'approved', 'rejected');
-CREATE TYPE public.task_status AS ENUM ('todo', 'in_progress', 'completed');
-CREATE TYPE public.task_priority AS ENUM ('low', 'medium', 'high', 'critical');
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'app_role' AND typnamespace = 'public'::regnamespace) THEN
+    CREATE TYPE public.app_role AS ENUM ('admin', 'student');
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'budget_status' AND typnamespace = 'public'::regnamespace) THEN
+    CREATE TYPE public.budget_status AS ENUM ('pending', 'approved', 'rejected');
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'task_status' AND typnamespace = 'public'::regnamespace) THEN
+    CREATE TYPE public.task_status AS ENUM ('todo', 'in_progress', 'completed');
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'task_priority' AND typnamespace = 'public'::regnamespace) THEN
+    CREATE TYPE public.task_priority AS ENUM ('low', 'medium', 'high', 'critical');
+  END IF;
+END $$;
 
 -- 3. CREATE TABLES
 
-CREATE TABLE public.profiles (
+CREATE TABLE IF NOT EXISTS public.profiles (
   id uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   email text,
   full_name text,
@@ -74,7 +77,7 @@ CREATE TABLE public.profiles (
   updated_at timestamptz DEFAULT now() NOT NULL
 );
 
-CREATE TABLE public.user_roles (
+CREATE TABLE IF NOT EXISTS public.user_roles (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id uuid REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
   role app_role NOT NULL DEFAULT 'student',
@@ -82,7 +85,7 @@ CREATE TABLE public.user_roles (
   UNIQUE (user_id, role)
 );
 
-CREATE TABLE public.startups (
+CREATE TABLE IF NOT EXISTS public.startups (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   name text NOT NULL,
   description text,
@@ -94,7 +97,7 @@ CREATE TABLE public.startups (
   UNIQUE (invite_code)
 );
 
-CREATE TABLE public.startup_members (
+CREATE TABLE IF NOT EXISTS public.startup_members (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   startup_id uuid REFERENCES public.startups(id) ON DELETE CASCADE NOT NULL,
   user_id uuid REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
@@ -103,7 +106,7 @@ CREATE TABLE public.startup_members (
   UNIQUE (startup_id, user_id)
 );
 
-CREATE TABLE public.budgets (
+CREATE TABLE IF NOT EXISTS public.budgets (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   startup_id uuid REFERENCES public.startups(id) ON DELETE CASCADE NOT NULL,
   total_amount numeric(12,2) NOT NULL,
@@ -118,7 +121,7 @@ CREATE TABLE public.budgets (
   UNIQUE (startup_id)
 );
 
-CREATE TABLE public.tasks (
+CREATE TABLE IF NOT EXISTS public.tasks (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   startup_id uuid REFERENCES public.startups(id) ON DELETE CASCADE NOT NULL,
   title text NOT NULL,
@@ -133,7 +136,7 @@ CREATE TABLE public.tasks (
   updated_at timestamptz DEFAULT now() NOT NULL
 );
 
-CREATE TABLE public.expenditures (
+CREATE TABLE IF NOT EXISTS public.expenditures (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   startup_id uuid REFERENCES public.startups(id) ON DELETE CASCADE NOT NULL,
   title text NOT NULL,
@@ -148,7 +151,7 @@ CREATE TABLE public.expenditures (
   created_at timestamptz DEFAULT now() NOT NULL
 );
 
-CREATE TABLE public.documents (
+CREATE TABLE IF NOT EXISTS public.documents (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   startup_id uuid REFERENCES public.startups(id) ON DELETE CASCADE NOT NULL,
   name text NOT NULL,
@@ -159,7 +162,7 @@ CREATE TABLE public.documents (
   created_at timestamptz DEFAULT now() NOT NULL
 );
 
-CREATE TABLE public.messages (
+CREATE TABLE IF NOT EXISTS public.messages (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   startup_id uuid REFERENCES public.startups(id) ON DELETE CASCADE NOT NULL,
   user_id uuid REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
@@ -167,7 +170,7 @@ CREATE TABLE public.messages (
   created_at timestamptz DEFAULT now() NOT NULL
 );
 
-CREATE TABLE public.activity_log (
+CREATE TABLE IF NOT EXISTS public.activity_log (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   startup_id uuid REFERENCES public.startups(id) ON DELETE CASCADE NOT NULL,
   user_id uuid REFERENCES auth.users(id) ON DELETE SET NULL NOT NULL,
@@ -274,7 +277,18 @@ CREATE POLICY "Members can view their activity_log" ON public.activity_log FOR S
 CREATE POLICY "Members can insert activity_log" ON public.activity_log FOR INSERT WITH CHECK (public.is_startup_member(startup_id));
 
 -- Enable realtime for messages
-ALTER PUBLICATION supabase_realtime ADD TABLE public.messages;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime'
+      AND schemaname = 'public'
+      AND tablename = 'messages'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.messages;
+  END IF;
+END $$;
 
 -- 9. STORAGE BUCKET
 INSERT INTO storage.buckets (id, name, public) VALUES ('documents', 'documents', true) ON CONFLICT (id) DO NOTHING;
