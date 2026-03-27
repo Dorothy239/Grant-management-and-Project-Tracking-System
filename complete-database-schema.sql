@@ -6,14 +6,17 @@
 
 -- 1. REFRESH RECREATABLE OBJECTS ONLY
 DROP POLICY IF EXISTS "Anyone can view profiles" ON public.profiles;
+DROP POLICY IF EXISTS "Users can view accessible profiles" ON public.profiles;
 DROP POLICY IF EXISTS "Users can update their own profile" ON public.profiles;
 DROP POLICY IF EXISTS "Users can insert their own profile" ON public.profiles;
 DROP POLICY IF EXISTS "Admins can do everything with roles" ON public.user_roles;
 DROP POLICY IF EXISTS "Users can view their own role" ON public.user_roles;
 DROP POLICY IF EXISTS "Admins can do everything with startups" ON public.startups;
 DROP POLICY IF EXISTS "Anyone authenticated can view startups" ON public.startups;
+DROP POLICY IF EXISTS "Users can view accessible startups" ON public.startups;
 DROP POLICY IF EXISTS "Admins can do everything with members" ON public.startup_members;
 DROP POLICY IF EXISTS "Users can view all memberships" ON public.startup_members;
+DROP POLICY IF EXISTS "Users can view accessible memberships" ON public.startup_members;
 DROP POLICY IF EXISTS "Users can insert their own membership" ON public.startup_members;
 DROP POLICY IF EXISTS "Admins can do everything with budgets" ON public.budgets;
 DROP POLICY IF EXISTS "Members can manage their budgets" ON public.budgets;
@@ -205,6 +208,26 @@ RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS
   SELECT EXISTS (SELECT 1 FROM public.startup_members WHERE user_id = auth.uid() AND startup_id = _startup_id);
 $$;
 
+CREATE OR REPLACE FUNCTION public.can_access_startup(_startup_id uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT public.has_role('admin') OR public.is_startup_member(_startup_id);
+$$;
+
+CREATE OR REPLACE FUNCTION public.can_view_profile(_profile_id uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT
+    auth.uid() = _profile_id
+    OR public.has_role('admin')
+    OR EXISTS (
+      SELECT 1
+      FROM public.startup_members viewer_membership
+      JOIN public.startup_members target_membership
+        ON viewer_membership.startup_id = target_membership.startup_id
+      WHERE viewer_membership.user_id = auth.uid()
+        AND target_membership.user_id = _profile_id
+    );
+$$;
+
 -- 6. TRIGGER FUNCTIONS
 
 CREATE OR REPLACE FUNCTION public.handle_new_user()
@@ -234,7 +257,7 @@ CREATE TRIGGER set_budgets_updated_at BEFORE UPDATE ON public.budgets FOR EACH R
 -- 8. RLS POLICIES
 
 -- PROFILES
-CREATE POLICY "Anyone can view profiles" ON public.profiles FOR SELECT USING (true);
+CREATE POLICY "Users can view accessible profiles" ON public.profiles FOR SELECT USING (public.can_view_profile(id));
 CREATE POLICY "Users can update their own profile" ON public.profiles FOR UPDATE USING (auth.uid() = id);
 CREATE POLICY "Users can insert their own profile" ON public.profiles FOR INSERT WITH CHECK (auth.uid() = id);
 
@@ -244,11 +267,13 @@ CREATE POLICY "Users can view their own role" ON public.user_roles FOR SELECT US
 
 -- STARTUPS
 CREATE POLICY "Admins can do everything with startups" ON public.startups FOR ALL USING (public.has_role('admin'));
-CREATE POLICY "Anyone authenticated can view startups" ON public.startups FOR SELECT USING (auth.uid() IS NOT NULL);
+CREATE POLICY "Users can view accessible startups" ON public.startups FOR SELECT USING (public.can_access_startup(id));
 
 -- STARTUP_MEMBERS
 CREATE POLICY "Admins can do everything with members" ON public.startup_members FOR ALL USING (public.has_role('admin'));
-CREATE POLICY "Users can view all memberships" ON public.startup_members FOR SELECT USING (auth.uid() IS NOT NULL);
+CREATE POLICY "Users can view accessible memberships" ON public.startup_members FOR SELECT USING (
+  auth.uid() = user_id OR public.can_access_startup(startup_id)
+);
 CREATE POLICY "Users can insert their own membership" ON public.startup_members FOR INSERT WITH CHECK (auth.uid() = user_id);
 
 -- BUDGETS
