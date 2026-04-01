@@ -69,6 +69,27 @@ BEGIN
   END IF;
 END $$;
 
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'startup_member_role' AND typnamespace = 'public'::regnamespace) THEN
+    CREATE TYPE public.startup_member_role AS ENUM ('leader', 'member');
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'sdlc_phase' AND typnamespace = 'public'::regnamespace) THEN
+    CREATE TYPE public.sdlc_phase AS ENUM (
+      'Requirements',
+      'Design',
+      'Development',
+      'Testing',
+      'Deployment',
+      'Maintenance'
+    );
+  END IF;
+END $$;
+
 -- 3. CREATE TABLES
 
 CREATE TABLE IF NOT EXISTS public.profiles (
@@ -104,7 +125,7 @@ CREATE TABLE IF NOT EXISTS public.startup_members (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   startup_id uuid REFERENCES public.startups(id) ON DELETE CASCADE NOT NULL,
   user_id uuid REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
-  role text NOT NULL DEFAULT 'member',
+  role startup_member_role NOT NULL DEFAULT 'member',
   created_at timestamptz DEFAULT now() NOT NULL,
   UNIQUE (startup_id, user_id)
 );
@@ -129,7 +150,7 @@ CREATE TABLE IF NOT EXISTS public.tasks (
   startup_id uuid REFERENCES public.startups(id) ON DELETE CASCADE NOT NULL,
   title text NOT NULL CHECK (length(trim(title)) > 0),
   description text,
-  phase text NOT NULL DEFAULT 'Development' CHECK (length(trim(phase)) > 0),
+  phase sdlc_phase NOT NULL DEFAULT 'Development',
   status task_status DEFAULT 'todo' NOT NULL,
   priority task_priority DEFAULT 'medium' NOT NULL,
   assigned_to uuid REFERENCES auth.users(id) ON DELETE SET NULL,
@@ -146,7 +167,7 @@ CREATE TABLE IF NOT EXISTS public.expenditures (
   description text,
   amount numeric(12,2) NOT NULL CHECK (amount > 0),
   category text NOT NULL CHECK (length(trim(category)) > 0),
-  phase text,
+  phase sdlc_phase,
   receipt_url text,
   date date NOT NULL,
   linked_task_id uuid REFERENCES public.tasks(id) ON DELETE SET NULL,
@@ -187,6 +208,29 @@ CREATE TABLE IF NOT EXISTS public.activity_log (
 -- 4. ADD VALIDATION CONSTRAINTS FOR EXISTING TABLES
 DO $$
 BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'startup_members'
+      AND column_name = 'role'
+      AND udt_name <> 'startup_member_role'
+  ) THEN
+    ALTER TABLE public.startup_members ALTER COLUMN role DROP DEFAULT;
+    ALTER TABLE public.startup_members
+      ALTER COLUMN role TYPE public.startup_member_role
+      USING (
+        CASE lower(trim(role::text))
+          WHEN 'leader' THEN 'leader'::public.startup_member_role
+          ELSE 'member'::public.startup_member_role
+        END
+      );
+    ALTER TABLE public.startup_members ALTER COLUMN role SET DEFAULT 'member';
+  END IF;
+END $$;
+
+DO $$
+BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'startups_name_not_blank') THEN
     ALTER TABLE public.startups ADD CONSTRAINT startups_name_not_blank CHECK (length(trim(name)) > 0);
   END IF;
@@ -210,8 +254,29 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tasks_title_not_blank') THEN
     ALTER TABLE public.tasks ADD CONSTRAINT tasks_title_not_blank CHECK (length(trim(title)) > 0);
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tasks_phase_not_blank') THEN
-    ALTER TABLE public.tasks ADD CONSTRAINT tasks_phase_not_blank CHECK (length(trim(phase)) > 0);
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'tasks'
+      AND column_name = 'phase'
+      AND udt_name <> 'sdlc_phase'
+  ) THEN
+    ALTER TABLE public.tasks ALTER COLUMN phase DROP DEFAULT;
+    ALTER TABLE public.tasks
+      ALTER COLUMN phase TYPE public.sdlc_phase
+      USING (
+        CASE lower(trim(phase::text))
+          WHEN 'requirements' THEN 'Requirements'::public.sdlc_phase
+          WHEN 'design' THEN 'Design'::public.sdlc_phase
+          WHEN 'development' THEN 'Development'::public.sdlc_phase
+          WHEN 'testing' THEN 'Testing'::public.sdlc_phase
+          WHEN 'deployment' THEN 'Deployment'::public.sdlc_phase
+          WHEN 'maintenance' THEN 'Maintenance'::public.sdlc_phase
+          ELSE 'Development'::public.sdlc_phase
+        END
+      );
+    ALTER TABLE public.tasks ALTER COLUMN phase SET DEFAULT 'Development';
   END IF;
 END $$;
 
@@ -225,6 +290,29 @@ BEGIN
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'expenditures_category_not_blank') THEN
     ALTER TABLE public.expenditures ADD CONSTRAINT expenditures_category_not_blank CHECK (length(trim(category)) > 0);
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'expenditures'
+      AND column_name = 'phase'
+      AND udt_name <> 'sdlc_phase'
+  ) THEN
+    ALTER TABLE public.expenditures
+      ALTER COLUMN phase TYPE public.sdlc_phase
+      USING (
+        CASE
+          WHEN phase IS NULL OR trim(phase::text) = '' THEN NULL
+          WHEN lower(trim(phase::text)) = 'requirements' THEN 'Requirements'::public.sdlc_phase
+          WHEN lower(trim(phase::text)) = 'design' THEN 'Design'::public.sdlc_phase
+          WHEN lower(trim(phase::text)) = 'development' THEN 'Development'::public.sdlc_phase
+          WHEN lower(trim(phase::text)) = 'testing' THEN 'Testing'::public.sdlc_phase
+          WHEN lower(trim(phase::text)) = 'deployment' THEN 'Deployment'::public.sdlc_phase
+          WHEN lower(trim(phase::text)) = 'maintenance' THEN 'Maintenance'::public.sdlc_phase
+          ELSE NULL
+        END
+      );
   END IF;
 END $$;
 
