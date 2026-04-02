@@ -349,7 +349,17 @@ BEGIN
   END IF;
 END $$;
 
--- 5. ENABLE RLS ON ALL TABLES
+-- 5. CREATE PERFORMANCE INDEXES
+CREATE INDEX IF NOT EXISTS idx_startup_members_startup_id ON public.startup_members(startup_id);
+CREATE INDEX IF NOT EXISTS idx_startup_members_user_id ON public.startup_members(user_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_startup_id ON public.tasks(startup_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_assigned_to ON public.tasks(assigned_to);
+CREATE INDEX IF NOT EXISTS idx_expenditures_startup_id ON public.expenditures(startup_id);
+CREATE INDEX IF NOT EXISTS idx_documents_startup_id ON public.documents(startup_id);
+CREATE INDEX IF NOT EXISTS idx_messages_startup_id_created_at ON public.messages(startup_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_activity_log_startup_id_created_at ON public.activity_log(startup_id, created_at DESC);
+
+-- 6. ENABLE RLS ON ALL TABLES
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.user_roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.startups ENABLE ROW LEVEL SECURITY;
@@ -361,7 +371,7 @@ ALTER TABLE public.documents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.activity_log ENABLE ROW LEVEL SECURITY;
 
--- 6. SECURITY DEFINER FUNCTIONS
+-- 7. SECURITY DEFINER FUNCTIONS
 
 CREATE OR REPLACE FUNCTION public.has_role(_role app_role)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
@@ -393,7 +403,7 @@ RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS
     );
 $$;
 
--- 7. TRIGGER FUNCTIONS
+-- 8. TRIGGER FUNCTIONS
 
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
@@ -413,13 +423,13 @@ BEGIN
 END;
 $$;
 
--- 8. TRIGGERS
+-- 9. TRIGGERS
 CREATE TRIGGER on_auth_user_created AFTER INSERT ON auth.users FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 CREATE TRIGGER set_profiles_updated_at BEFORE UPDATE ON public.profiles FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
 CREATE TRIGGER set_startups_updated_at BEFORE UPDATE ON public.startups FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
 CREATE TRIGGER set_budgets_updated_at BEFORE UPDATE ON public.budgets FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
 
--- 9. RLS POLICIES
+-- 10. RLS POLICIES
 
 -- PROFILES
 CREATE POLICY "Users can view accessible profiles" ON public.profiles FOR SELECT USING (public.can_view_profile(id));
@@ -480,14 +490,14 @@ BEGIN
   END IF;
 END $$;
 
--- 10. STORAGE BUCKET
+-- 11. STORAGE BUCKET
 INSERT INTO storage.buckets (id, name, public) VALUES ('documents', 'documents', true) ON CONFLICT (id) DO NOTHING;
 
 CREATE POLICY "Anyone can view documents" ON storage.objects FOR SELECT USING (bucket_id = 'documents');
 CREATE POLICY "Authenticated users can upload documents" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'documents' AND auth.uid() IS NOT NULL);
 CREATE POLICY "Users can delete their own documents" ON storage.objects FOR DELETE USING (bucket_id = 'documents' AND auth.uid() IS NOT NULL);
 
--- 11. BACKFILL
+-- 12. BACKFILL
 INSERT INTO public.profiles (id, email, full_name)
 SELECT id, email, COALESCE(raw_user_meta_data->>'full_name', '')
 FROM auth.users WHERE id NOT IN (SELECT id FROM public.profiles) ON CONFLICT (id) DO NOTHING;
