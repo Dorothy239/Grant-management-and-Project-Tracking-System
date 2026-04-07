@@ -133,6 +133,8 @@ CREATE TABLE IF NOT EXISTS public.startup_members (
 CREATE TABLE IF NOT EXISTS public.budgets (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   startup_id uuid REFERENCES public.startups(id) ON DELETE CASCADE NOT NULL,
+  version integer NOT NULL DEFAULT 1 CHECK (version >= 1),
+  is_current boolean NOT NULL DEFAULT true,
   total_amount numeric(12,2) NOT NULL CHECK (total_amount >= 0),
   phase_allocations jsonb DEFAULT '{}'::jsonb,
   status budget_status DEFAULT 'pending' NOT NULL,
@@ -140,9 +142,10 @@ CREATE TABLE IF NOT EXISTS public.budgets (
   approved_at timestamptz,
   admin_notes text,
   submitted_by uuid REFERENCES auth.users(id) ON DELETE SET NULL,
+  submitted_at timestamptz DEFAULT now() NOT NULL,
   created_at timestamptz DEFAULT now() NOT NULL,
   updated_at timestamptz DEFAULT now() NOT NULL,
-  UNIQUE (startup_id)
+  UNIQUE (startup_id, version)
 );
 
 CREATE TABLE IF NOT EXISTS public.tasks (
@@ -244,8 +247,65 @@ END $$;
 
 DO $$
 BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'budgets'
+      AND column_name = 'version'
+  ) THEN
+    ALTER TABLE public.budgets ADD COLUMN version integer;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'budgets'
+      AND column_name = 'is_current'
+  ) THEN
+    ALTER TABLE public.budgets ADD COLUMN is_current boolean;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'budgets'
+      AND column_name = 'submitted_at'
+  ) THEN
+    ALTER TABLE public.budgets ADD COLUMN submitted_at timestamptz;
+  END IF;
+
+  UPDATE public.budgets
+  SET
+    version = COALESCE(version, 1),
+    is_current = COALESCE(is_current, true),
+    submitted_at = COALESCE(submitted_at, created_at, now())
+  WHERE version IS NULL OR is_current IS NULL OR submitted_at IS NULL;
+
+  ALTER TABLE public.budgets ALTER COLUMN version SET DEFAULT 1;
+  ALTER TABLE public.budgets ALTER COLUMN version SET NOT NULL;
+  ALTER TABLE public.budgets ALTER COLUMN is_current SET DEFAULT true;
+  ALTER TABLE public.budgets ALTER COLUMN is_current SET NOT NULL;
+  ALTER TABLE public.budgets ALTER COLUMN submitted_at SET DEFAULT now();
+  ALTER TABLE public.budgets ALTER COLUMN submitted_at SET NOT NULL;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'budgets_version_positive') THEN
+    ALTER TABLE public.budgets ADD CONSTRAINT budgets_version_positive CHECK (version >= 1);
+  END IF;
+
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'budgets_total_amount_nonnegative') THEN
     ALTER TABLE public.budgets ADD CONSTRAINT budgets_total_amount_nonnegative CHECK (total_amount >= 0);
+  END IF;
+END $$;
+
+ALTER TABLE public.budgets DROP CONSTRAINT IF EXISTS budgets_startup_id_key;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'budgets_startup_id_version_key') THEN
+    ALTER TABLE public.budgets ADD CONSTRAINT budgets_startup_id_version_key UNIQUE (startup_id, version);
   END IF;
 END $$;
 
@@ -350,6 +410,10 @@ BEGIN
 END $$;
 
 -- 5. CREATE PERFORMANCE INDEXES
+CREATE INDEX IF NOT EXISTS idx_budgets_startup_id ON public.budgets(startup_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_budgets_current_per_startup
+  ON public.budgets(startup_id)
+  WHERE is_current;
 CREATE INDEX IF NOT EXISTS idx_startup_members_startup_id ON public.startup_members(startup_id);
 CREATE INDEX IF NOT EXISTS idx_startup_members_user_id ON public.startup_members(user_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_startup_id ON public.tasks(startup_id);
