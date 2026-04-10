@@ -510,10 +510,22 @@ $$;
 
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  assigned_role public.app_role := 'student';
 BEGIN
   INSERT INTO public.profiles (id, email, full_name)
   VALUES (NEW.id, NEW.email, COALESCE(NEW.raw_user_meta_data->>'full_name', ''));
-  INSERT INTO public.user_roles (user_id, role) VALUES (NEW.id, 'student');
+
+  -- Bootstrap the very first admin automatically so the system remains manageable.
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.user_roles
+    WHERE role = 'admin'
+  ) THEN
+    assigned_role := 'admin';
+  END IF;
+
+  INSERT INTO public.user_roles (user_id, role) VALUES (NEW.id, assigned_role);
   RETURN NEW;
 END;
 $$;
@@ -610,6 +622,23 @@ FROM auth.users WHERE id NOT IN (SELECT id FROM public.profiles) ON CONFLICT (id
 
 INSERT INTO public.user_roles (user_id, role)
 SELECT id, 'student' FROM auth.users WHERE id NOT IN (SELECT user_id FROM public.user_roles) ON CONFLICT (user_id, role) DO NOTHING;
+
+-- Ensure an existing deployment always has at least one admin.
+INSERT INTO public.user_roles (user_id, role)
+SELECT seed_user.id, 'admin'
+FROM (
+  SELECT id
+  FROM auth.users
+  ORDER BY created_at NULLS LAST, id
+  LIMIT 1
+) AS seed_user
+WHERE seed_user.id IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1
+    FROM public.user_roles
+    WHERE role = 'admin'
+  )
+ON CONFLICT (user_id, role) DO NOTHING;
 
 -- =====================================================
 -- DONE! Tables: profiles, user_roles, startups, startup_members, budgets, tasks, expenditures, documents, messages, activity_log
