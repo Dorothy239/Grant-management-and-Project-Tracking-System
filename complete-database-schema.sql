@@ -39,6 +39,9 @@ DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 DROP TRIGGER IF EXISTS set_profiles_updated_at ON public.profiles;
 DROP TRIGGER IF EXISTS set_startups_updated_at ON public.startups;
 DROP TRIGGER IF EXISTS set_budgets_updated_at ON public.budgets;
+DROP TRIGGER IF EXISTS set_tasks_updated_at ON public.tasks;
+DROP TRIGGER IF EXISTS set_expenditures_updated_at ON public.expenditures;
+DROP TRIGGER IF EXISTS set_documents_updated_at ON public.documents;
 
 -- 2. CREATE ENUMS
 DO $$
@@ -175,7 +178,8 @@ CREATE TABLE IF NOT EXISTS public.expenditures (
   date date NOT NULL,
   linked_task_id uuid REFERENCES public.tasks(id) ON DELETE SET NULL,
   created_by uuid REFERENCES auth.users(id) ON DELETE SET NULL NOT NULL,
-  created_at timestamptz DEFAULT now() NOT NULL
+  created_at timestamptz DEFAULT now() NOT NULL,
+  updated_at timestamptz DEFAULT now() NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS public.documents (
@@ -186,7 +190,8 @@ CREATE TABLE IF NOT EXISTS public.documents (
   file_type text NOT NULL CHECK (length(trim(file_type)) > 0),
   file_size bigint NOT NULL CHECK (file_size >= 0),
   uploaded_by uuid REFERENCES auth.users(id) ON DELETE SET NULL NOT NULL,
-  created_at timestamptz DEFAULT now() NOT NULL
+  created_at timestamptz DEFAULT now() NOT NULL,
+  updated_at timestamptz DEFAULT now() NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS public.messages (
@@ -342,6 +347,23 @@ END $$;
 
 DO $$
 BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'expenditures'
+      AND column_name = 'updated_at'
+  ) THEN
+    ALTER TABLE public.expenditures ADD COLUMN updated_at timestamptz;
+  END IF;
+
+  UPDATE public.expenditures
+  SET updated_at = COALESCE(updated_at, created_at, now())
+  WHERE updated_at IS NULL;
+
+  ALTER TABLE public.expenditures ALTER COLUMN updated_at SET DEFAULT now();
+  ALTER TABLE public.expenditures ALTER COLUMN updated_at SET NOT NULL;
+
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'expenditures_title_not_blank') THEN
     ALTER TABLE public.expenditures ADD CONSTRAINT expenditures_title_not_blank CHECK (length(trim(title)) > 0);
   END IF;
@@ -378,6 +400,23 @@ END $$;
 
 DO $$
 BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'documents'
+      AND column_name = 'updated_at'
+  ) THEN
+    ALTER TABLE public.documents ADD COLUMN updated_at timestamptz;
+  END IF;
+
+  UPDATE public.documents
+  SET updated_at = COALESCE(updated_at, created_at, now())
+  WHERE updated_at IS NULL;
+
+  ALTER TABLE public.documents ALTER COLUMN updated_at SET DEFAULT now();
+  ALTER TABLE public.documents ALTER COLUMN updated_at SET NOT NULL;
+
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'documents_name_not_blank') THEN
     ALTER TABLE public.documents ADD CONSTRAINT documents_name_not_blank CHECK (length(trim(name)) > 0);
   END IF;
@@ -492,6 +531,9 @@ CREATE TRIGGER on_auth_user_created AFTER INSERT ON auth.users FOR EACH ROW EXEC
 CREATE TRIGGER set_profiles_updated_at BEFORE UPDATE ON public.profiles FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
 CREATE TRIGGER set_startups_updated_at BEFORE UPDATE ON public.startups FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
 CREATE TRIGGER set_budgets_updated_at BEFORE UPDATE ON public.budgets FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+CREATE TRIGGER set_tasks_updated_at BEFORE UPDATE ON public.tasks FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+CREATE TRIGGER set_expenditures_updated_at BEFORE UPDATE ON public.expenditures FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+CREATE TRIGGER set_documents_updated_at BEFORE UPDATE ON public.documents FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
 
 -- 10. RLS POLICIES
 
