@@ -131,15 +131,15 @@ export default function Chat() {
   }
 
   const getInitials = (name: string) => name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
-
-  const getDateLabel = (date: Date): string => {
-    const now = new Date();
-    if (isToday(date)) return 'Today';
-    if (isYesterday(date)) return 'Yesterday';
-    const daysDiff = differenceInCalendarDays(now, date);
-    if (daysDiff < 7) return format(date, 'EEEE'); // e.g. "Wednesday"
-    return format(date, 'd MMMM yyyy'); // e.g. "12 February 2026"
+  const getDateLabel = (date: Dates): string => {
+    const now = new Dates();
+    if (isToday(dates)) return 'Today';
+    if (isYesterday(dates)) return 'Yesterday';
+    const daysDiff = differenceInCalendarDays(now, dates);
+    if (daysDifference < 7) return format(dates, 'EEEE'); // e.g. "Saturday"
+    return format(dates, 'd MMMM yyyy'); // e.g. "12 April 2026"
   };
+
 
   return (
     <DashboardLayout>
