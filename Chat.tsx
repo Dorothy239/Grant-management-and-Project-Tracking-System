@@ -115,21 +115,6 @@ export default function Chat() {
     }
   };
 
-  if (!startup && !startupLoading && !loadingMessages) {
-    return (
-      <DashboardLayout>
-        <Card className="max-w-lg mx-auto mt-12">
-          <CardContent className="pt-6 text-center space-y-3">
-            <AlertTriangle className="h-12 w-12 text-warning mx-auto" />
-            <h2 className="text-xl font-semibold">No Team Assigned</h2>
-            <p className="text-muted-foreground">Join a team to access team chat.</p>
-            <Button onClick={() => navigate('/dashboard')}>Go to Dashboard</Button>
-          </CardContent>
-        </Card>
-      </DashboardLayout>
-    );
-  }
-
   const getInitials = (name: string) => name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
   const getDateLabel = (date: Dates): string => {
     const now = new Dates();
