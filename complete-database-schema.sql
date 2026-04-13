@@ -202,17 +202,6 @@ CREATE TABLE IF NOT EXISTS public.messages (
   created_at timestamptz DEFAULT now() NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS public.activity_log (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  startup_id uuid REFERENCES public.startups(id) ON DELETE CASCADE NOT NULL,
-  user_id uuid REFERENCES auth.users(id) ON DELETE SET NULL NOT NULL,
-  action text NOT NULL CHECK (length(trim(action)) > 0),
-  entity_type text NOT NULL CHECK (length(trim(entity_type)) > 0),
-  entity_id uuid,
-  details jsonb DEFAULT '{}'::jsonb,
-  created_at timestamptz DEFAULT now() NOT NULL
-);
-
 -- 4. ADD VALIDATION CONSTRAINTS FOR EXISTING TABLES
 DO $$
 BEGIN
@@ -438,15 +427,6 @@ BEGIN
   END IF;
 END $$;
 
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'activity_log_action_not_blank') THEN
-    ALTER TABLE public.activity_log ADD CONSTRAINT activity_log_action_not_blank CHECK (length(trim(action)) > 0);
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'activity_log_entity_type_not_blank') THEN
-    ALTER TABLE public.activity_log ADD CONSTRAINT activity_log_entity_type_not_blank CHECK (length(trim(entity_type)) > 0);
-  END IF;
-END $$;
 
 -- 5. CREATE PERFORMANCE INDEXES
 CREATE INDEX IF NOT EXISTS idx_budgets_startup_id ON public.budgets(startup_id);
@@ -460,7 +440,6 @@ CREATE INDEX IF NOT EXISTS idx_tasks_assigned_to ON public.tasks(assigned_to);
 CREATE INDEX IF NOT EXISTS idx_expenditures_startup_id ON public.expenditures(startup_id);
 CREATE INDEX IF NOT EXISTS idx_documents_startup_id ON public.documents(startup_id);
 CREATE INDEX IF NOT EXISTS idx_messages_startup_id_created_at ON public.messages(startup_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_activity_log_startup_id_created_at ON public.activity_log(startup_id, created_at DESC);
 
 -- 6. ENABLE RLS ON ALL TABLES
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
@@ -472,7 +451,6 @@ ALTER TABLE public.tasks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.expenditures ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.documents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.activity_log ENABLE ROW LEVEL SECURITY;
 
 -- 7. SECURITY DEFINER FUNCTIONS
 
@@ -585,9 +563,6 @@ CREATE POLICY "Members can manage their documents" ON public.documents FOR ALL U
 -- MESSAGES
 CREATE POLICY "Members can manage their messages" ON public.messages FOR ALL USING (public.is_startup_member(startup_id));
 
--- ACTIVITY_LOG
-CREATE POLICY "Members can view their activity_log" ON public.activity_log FOR SELECT USING (public.is_startup_member(startup_id));
-CREATE POLICY "Members can insert activity_log" ON public.activity_log FOR INSERT WITH CHECK (public.is_startup_member(startup_id));
 
 -- Enable realtime for messages
 DO $$
