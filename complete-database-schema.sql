@@ -570,15 +570,12 @@ CREATE POLICY "Users can view accessible memberships" ON public.startup_members 
 CREATE POLICY "Users can insert their own membership" ON public.startup_members FOR INSERT WITH CHECK (auth.uid() = user_id);
 
 -- BUDGETS
-CREATE POLICY "Admins can do everything with budgets" ON public.budgets FOR ALL USING (public.has_role('admin'));
 CREATE POLICY "Members can manage their budgets" ON public.budgets FOR ALL USING (public.is_startup_member(startup_id));
 
 -- TASKS
-CREATE POLICY "Admins can do everything with tasks" ON public.tasks FOR ALL USING (public.has_role('admin'));
 CREATE POLICY "Members can manage their tasks" ON public.tasks FOR ALL USING (public.is_startup_member(startup_id));
 
 -- EXPENDITURES
-CREATE POLICY "Admins can do everything with expenditures" ON public.expenditures FOR ALL USING (public.has_role('admin'));
 CREATE POLICY "Members can manage their expenditures" ON public.expenditures FOR ALL USING (public.is_startup_member(startup_id));
 
 -- DOCUMENTS
@@ -586,11 +583,9 @@ CREATE POLICY "Admins can do everything with documents" ON public.documents FOR 
 CREATE POLICY "Members can manage their documents" ON public.documents FOR ALL USING (public.is_startup_member(startup_id));
 
 -- MESSAGES
-CREATE POLICY "Admins can do everything with messages" ON public.messages FOR ALL USING (public.has_role('admin'));
 CREATE POLICY "Members can manage their messages" ON public.messages FOR ALL USING (public.is_startup_member(startup_id));
 
 -- ACTIVITY_LOG
-CREATE POLICY "Admins can do everything with activity_log" ON public.activity_log FOR ALL USING (public.has_role('admin'));
 CREATE POLICY "Members can view their activity_log" ON public.activity_log FOR SELECT USING (public.is_startup_member(startup_id));
 CREATE POLICY "Members can insert activity_log" ON public.activity_log FOR INSERT WITH CHECK (public.is_startup_member(startup_id));
 
