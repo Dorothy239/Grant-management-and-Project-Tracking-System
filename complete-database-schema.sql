@@ -29,6 +29,9 @@ DROP POLICY IF EXISTS "Members can manage their documents" ON public.documents;
 DROP POLICY IF EXISTS "Anyone can view documents" ON storage.objects;
 DROP POLICY IF EXISTS "Authenticated users can upload documents" ON storage.objects;
 DROP POLICY IF EXISTS "Users can delete their own documents" ON storage.objects;
+DROP POLICY IF EXISTS "Startup members can view document objects" ON storage.objects;
+DROP POLICY IF EXISTS "Startup members can upload document objects" ON storage.objects;
+DROP POLICY IF EXISTS "Startup members can delete document objects" ON storage.objects;
 DROP POLICY IF EXISTS "Admins can do everything with messages" ON public.messages;
 DROP POLICY IF EXISTS "Members can manage their messages" ON public.messages;
 DROP POLICY IF EXISTS "Admins can do everything with activity_log" ON public.activity_log;
@@ -484,6 +487,23 @@ RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS
     );
 $$;
 
+CREATE OR REPLACE FUNCTION public.document_object_startup_id(_object_name text)
+RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT CASE
+    WHEN split_part(_object_name, '/', 1) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+      THEN split_part(_object_name, '/', 1)::uuid
+    ELSE NULL
+  END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.can_access_document_object(_bucket_id text, _object_name text)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT
+    _bucket_id = 'documents'
+    AND public.document_object_startup_id(_object_name) IS NOT NULL
+    AND public.can_access_startup(public.document_object_startup_id(_object_name));
+$$;
+
 -- 8. TRIGGER FUNCTIONS
 
 CREATE OR REPLACE FUNCTION public.handle_new_user()
@@ -581,9 +601,15 @@ END $$;
 -- 11. STORAGE BUCKET
 INSERT INTO storage.buckets (id, name, public) VALUES ('documents', 'documents', true) ON CONFLICT (id) DO NOTHING;
 
-CREATE POLICY "Anyone can view documents" ON storage.objects FOR SELECT USING (bucket_id = 'documents');
-CREATE POLICY "Authenticated users can upload documents" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'documents' AND auth.uid() IS NOT NULL);
-CREATE POLICY "Users can delete their own documents" ON storage.objects FOR DELETE USING (bucket_id = 'documents' AND auth.uid() IS NOT NULL);
+-- Document object paths must start with the owning startup UUID: <startup_id>/<filename>
+CREATE POLICY "Startup members can view document objects" ON storage.objects
+FOR SELECT USING (public.can_access_document_object(bucket_id, name));
+
+CREATE POLICY "Startup members can upload document objects" ON storage.objects
+FOR INSERT WITH CHECK (public.can_access_document_object(bucket_id, name));
+
+CREATE POLICY "Startup members can delete document objects" ON storage.objects
+FOR DELETE USING (public.can_access_document_object(bucket_id, name));
 
 -- 12. BACKFILL
 INSERT INTO public.profiles (id, email, full_name)
