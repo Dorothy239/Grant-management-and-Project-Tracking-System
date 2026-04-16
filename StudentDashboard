@@ -1,0 +1,201 @@
+import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/contexts/AuthContext';
+import { useStartup } from '@/hooks/useStartup';
+import DashboardLayout from '@/components/DashboardLayout';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Progress } from '@/components/ui/progress';
+import { Badge } from '@/components/ui/badge';
+import {
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter,
+} from '@/components/ui/dialog';
+import {
+  ListTodo, DollarSign, FolderOpen, TrendingUp, Clock, CheckCircle2, AlertCircle,
+  ArrowRight, Users, Building2, KeyRound, Loader2, AlertTriangle, MessageCircle, CalendarRange, Plus, X,
+} from 'lucide-react';
+import { supabase } from '@/integrations/supabase/client';
+import { useToast } from '@/hooks/use-toast';
+import { useActivityLog } from '@/hooks/useActivityLog';
+import { useCustomPhases } from '@/hooks/useCustomPhases';
+import { formatNaira } from '@/lib/currency';
+import {
+  PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
+  LineChart, Line, XAxis, YAxis, CartesianGrid,
+} from 'recharts';
+
+export default function StudentDashboard() {
+  const { user, role, loading } = useAuth();
+  const { startup, membership, budget, members, loading: startupLoading, refetch } = useStartup();
+  const { logActivity } = useActivityLog();
+  const { phases: budgetPhases } = useCustomPhases(startup?.id);
+  const navigate = useNavigate();
+  const { toast } = useToast();
+
+  const [inviteCode, setInviteCode] = useState('');
+  const [joining, setJoining] = useState(false);
+  const [isBudgetDialogOpen, setIsBudgetDialogOpen] = useState(false);
+  const [budgetSubmitting, setBudgetSubmitting] = useState(false);
+  const [taskStats, setTaskStats] = useState({ total: 0, completed: 0, inProgress: 0 });
+  const [totalSpent, setTotalSpent] = useState(0);
+  const [docCount, setDocCount] = useState(0);
+  const [expendituresByCategory, setExpendituresByCategory] = useState<{ name: string; value: number }[]>([]);
+  const [burnRateData, setBurnRateData] = useState<{ day: string; spent: number; projected: number }[]>([]);
+
+  const [phaseAllocations, setPhaseAllocations] = useState<Record<string, string>>({});
+  const [newBudgetPhase, setNewBudgetPhase] = useState('');
+  const [budgetPhaseList, setBudgetPhaseList] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!loading && !user) navigate('/auth');
+    if (!loading && role === 'admin') navigate('/admin');
+  }, [user, role, loading, navigate]);
+
+  useEffect(() => { if (startup) fetchStats(); }, [startup]);
+
+  const fetchStats = async () => {
+    if (!startup) return;
+    const [tasksRes, expRes, docsRes] = await Promise.all([
+      supabase.from('tasks').select('status').eq('startup_id', startup.id),
+      supabase.from('expenditures').select('amount, category, date, created_at').eq('startup_id', startup.id).order('date', { ascending: true }),
+      supabase.from('documents').select('id').eq('startup_id', startup.id),
+    ]);
+    const tasks = tasksRes.data || [];
+    const exps = expRes.data || [];
+    setTaskStats({ total: tasks.length, completed: tasks.filter(t => t.status === 'completed').length, inProgress: tasks.filter(t => t.status === 'in_progress').length });
+    const spent = exps.reduce((s, e) => s + Number(e.amount), 0);
+    setTotalSpent(spent);
+    setDocCount((docsRes.data || []).length);
+
+    const catMap: Record<string, number> = {};
+    exps.forEach(e => { catMap[e.category] = (catMap[e.category] || 0) + Number(e.amount); });
+    setExpendituresByCategory(Object.entries(catMap).map(([name, value]) => ({ name, value })));
+
+    if (exps.length > 0) {
+      const startDate = new Date(startup.created_at);
+      const endDate = new Date(startDate);
+      endDate.setMonth(endDate.getMonth() + 6);
+      const totalDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+      const grantAmt = Number(startup.grant_amount);
+
+      const dailyMap: Record<string, number> = {};
+      exps.forEach(e => {
+        const d = e.date || e.created_at.split('T')[0];
+        dailyMap[d] = (dailyMap[d] || 0) + Number(e.amount);
+      });
+
+      const sortedDates = Object.keys(dailyMap).sort();
+      let cumulative = 0;
+      const dataPoints: { day: string; spent: number; projected: number }[] = [];
+
+      const startStr = startDate.toISOString().split('T')[0];
+      if (!sortedDates.includes(startStr)) {
+        dataPoints.push({ day: startStr, spent: 0, projected: 0 });
+      }
+
+      sortedDates.forEach(d => {
+        cumulative += dailyMap[d];
+        const dayNum = Math.ceil((new Date(d).getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+        const projected = (grantAmt / totalDays) * dayNum;
+        dataPoints.push({ day: d, spent: cumulative, projected: Math.round(projected) });
+      });
+
+      const endStr = endDate.toISOString().split('T')[0];
+      dataPoints.push({ day: endStr, spent: cumulative, projected: grantAmt });
+
+      setBurnRateData(dataPoints);
+    }
+  };
+
+  const handleJoinTeam = async () => {
+    if (!user || !inviteCode.trim()) return;
+    setJoining(true);
+    try {
+      const { data: startupData, error: lookupError } = await supabase
+        .from('startups').select('id, name').eq('invite_code', inviteCode.trim().toUpperCase()).maybeSingle();
+      if (lookupError) throw lookupError;
+      if (!startupData) { toast({ title: 'Invalid Code', description: 'No team found.', variant: 'destructive' }); setJoining(false); return; }
+      const { error: joinError } = await supabase.from('startup_members').insert({ startup_id: startupData.id, user_id: user.id, role: 'member' });
+      if (joinError) {
+        if (joinError.code === '23505') toast({ title: 'Already a Member', description: 'You are already in this team.', variant: 'destructive' });
+        else throw joinError;
+      } else {
+        toast({ title: 'Welcome!', description: `You have joined ${startupData.name}.` });
+        await refetch();
+      }
+    } catch (error: any) {
+      console.error(error);
+      toast({ title: 'Error', description: 'Failed to join team.', variant: 'destructive' });
+    } finally { setJoining(false); }
+  };
+
+  const handleSubmitBudget = async () => {
+    if (!user || !startup) return;
+    setBudgetSubmitting(true);
+    try {
+      const allocations: Record<string, number> = {};
+      let total = 0;
+      for (const phase of budgetPhaseList) {
+        const val = parseFloat(phaseAllocations[phase] || '0');
+        if (val > 0) { allocations[phase] = val; total += val; }
+      }
+
+      if (total <= 0) {
+        toast({ title: 'Invalid Budget', description: 'Please allocate amounts to at least one phase.', variant: 'destructive' });
+        setBudgetSubmitting(false); return;
+      }
+
+      const grantAmount = Number(startup.grant_amount);
+      let status: 'pending' | 'approved' | 'rejected' = 'pending';
+      let adminNotes = 'Budget submitted for admin review.';
+
+      if (total <= grantAmount) {
+        adminNotes = `Budget submitted for review — ${formatNaira(total)} of ${formatNaira(grantAmount)} grant.`;
+      } else {
+        status = 'rejected';
+        adminNotes = `Budget auto-rejected — ${formatNaira(total)} exceeds the grant allocation of ${formatNaira(grantAmount)}.`;
+      }
+
+      const { error } = await supabase.from('budgets').insert({
+        startup_id: startup.id, total_amount: total, status,
+        phase_allocations: allocations,
+        submitted_by: user.id,
+        admin_notes: adminNotes,
+      });
+
+      if (error) {
+        if (error.code === '23505') toast({ title: 'Budget Exists', description: 'A budget already exists for your team.', variant: 'destructive' });
+        else throw error;
+      } else {
+        if (status === 'rejected') {
+          toast({ title: '❌ Budget Auto-Rejected', description: `Your budget exceeds the grant of ${formatNaira(grantAmount)}.`, variant: 'destructive' });
+        } else {
+          toast({ title: '📋 Budget Submitted', description: `Your budget of ${formatNaira(total)} has been submitted for admin approval.` });
+        }
+        await logActivity(startup.id, `submitted budget (${formatNaira(total)})`, 'budget', undefined, { total, allocations });
+        setIsBudgetDialogOpen(false);
+        setPhaseAllocations({});
+        setBudgetPhaseList([]);
+        await refetch();
+        fetchStats();
+      }
+    } catch (error) {
+      console.error(error);
+      toast({ title: 'Error', description: 'Failed to submit budget.', variant: 'destructive' });
+    } finally { setBudgetSubmitting(false); }
+  };
+
+  const phaseBudgetTotal = Object.values(phaseAllocations).reduce((s, v) => s + (parseFloat(v) || 0), 0);
+
+  // Show loading spinner while auth or startup data is loading
+  if (loading || startupLoading) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center py-20">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      </DashboardLayout>
+    );
+  }
