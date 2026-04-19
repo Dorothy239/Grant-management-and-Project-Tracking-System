@@ -109,6 +109,20 @@ CREATE TABLE public.documents (
 );
 
 -- 4. ENABLE RLS ON ALL TABLES
+CREATE INDEX IF NOT EXISTS idx_budgets_startup_id ON public.budgets(startup_id);
+CREATE INDEX IF NOT EXISTS idx_budgets_approved_by ON public.budgets(approved_by);
+CREATE INDEX IF NOT EXISTS idx_budgets_submitted_by ON public.budgets(submitted_by);
+CREATE INDEX IF NOT EXISTS idx_startup_members_startup_id ON public.startup_members(startup_id);
+CREATE INDEX IF NOT EXISTS idx_startup_members_user_id ON public.startup_members(user_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_startup_id ON public.tasks(startup_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_assigned_to ON public.tasks(assigned_to);
+CREATE INDEX IF NOT EXISTS idx_tasks_created_by ON public.tasks(created_by);
+CREATE INDEX IF NOT EXISTS idx_expenditures_startup_id ON public.expenditures(startup_id);
+CREATE INDEX IF NOT EXISTS idx_expenditures_created_by ON public.expenditures(created_by);
+CREATE INDEX IF NOT EXISTS idx_documents_startup_id ON public.documents(startup_id);
+CREATE INDEX IF NOT EXISTS idx_documents_uploaded_by ON public.documents(uploaded_by);
+CREATE INDEX IF NOT EXISTS idx_messages_startup_id_created_at ON public.messages(startup_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_messages_user_id ON public.messages(user_id);
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.user_roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.startups ENABLE ROW LEVEL SECURITY;
