@@ -77,6 +77,8 @@ CREATE TABLE public.tasks (
   assigned_to uuid REFERENCES auth.users(id) ON DELETE SET NULL,
   created_by uuid REFERENCES auth.users(id) ON DELETE SET NULL NOT NULL,
   due_date date,
+  deleted_at timestamptz,
+  deleted_by uuid REFERENCES auth.users(id) ON DELETE SET NULL,
   created_at timestamptz DEFAULT now() NOT NULL,
   updated_at timestamptz DEFAULT now() NOT NULL
 );
@@ -93,6 +95,8 @@ CREATE TABLE public.expenditures (
   receipt_url text,
   date date NOT NULL,
   created_by uuid REFERENCES auth.users(id) ON DELETE SET NULL NOT NULL,
+  deleted_at timestamptz,
+  deleted_by uuid REFERENCES auth.users(id) ON DELETE SET NULL,
   created_at timestamptz DEFAULT now() NOT NULL
 );
 
@@ -105,10 +109,20 @@ CREATE TABLE public.documents (
   file_type text NOT NULL,
   file_size bigint NOT NULL,
   uploaded_by uuid REFERENCES auth.users(id) ON DELETE SET NULL NOT NULL,
+  deleted_at timestamptz,
+  deleted_by uuid REFERENCES auth.users(id) ON DELETE SET NULL,
   created_at timestamptz DEFAULT now() NOT NULL
 );
 
--- 4. ENABLE RLS ON ALL TABLES
+-- 4. ADD SOFT-DELETE COLUMNS FOR EXISTING TABLES
+ALTER TABLE public.tasks ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
+ALTER TABLE public.tasks ADD COLUMN IF NOT EXISTS deleted_by uuid REFERENCES auth.users(id) ON DELETE SET NULL;
+ALTER TABLE public.expenditures ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
+ALTER TABLE public.expenditures ADD COLUMN IF NOT EXISTS deleted_by uuid REFERENCES auth.users(id) ON DELETE SET NULL;
+ALTER TABLE public.documents ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
+ALTER TABLE public.documents ADD COLUMN IF NOT EXISTS deleted_by uuid REFERENCES auth.users(id) ON DELETE SET NULL;
+
+-- 5. ENABLE RLS ON ALL TABLES
 CREATE INDEX IF NOT EXISTS idx_budgets_startup_id ON public.budgets(startup_id);
 CREATE INDEX IF NOT EXISTS idx_budgets_approved_by ON public.budgets(approved_by);
 CREATE INDEX IF NOT EXISTS idx_budgets_submitted_by ON public.budgets(submitted_by);
@@ -120,10 +134,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_startup_members_one_leader_per_startup
 CREATE INDEX IF NOT EXISTS idx_tasks_startup_id ON public.tasks(startup_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_assigned_to ON public.tasks(assigned_to);
 CREATE INDEX IF NOT EXISTS idx_tasks_created_by ON public.tasks(created_by);
+CREATE INDEX IF NOT EXISTS idx_tasks_deleted_at ON public.tasks(deleted_at);
 CREATE INDEX IF NOT EXISTS idx_expenditures_startup_id ON public.expenditures(startup_id);
 CREATE INDEX IF NOT EXISTS idx_expenditures_created_by ON public.expenditures(created_by);
+CREATE INDEX IF NOT EXISTS idx_expenditures_deleted_at ON public.expenditures(deleted_at);
 CREATE INDEX IF NOT EXISTS idx_documents_startup_id ON public.documents(startup_id);
 CREATE INDEX IF NOT EXISTS idx_documents_uploaded_by ON public.documents(uploaded_by);
+CREATE INDEX IF NOT EXISTS idx_documents_deleted_at ON public.documents(deleted_at);
 CREATE INDEX IF NOT EXISTS idx_messages_startup_id_created_at ON public.messages(startup_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_user_id ON public.messages(user_id);
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
@@ -135,7 +152,7 @@ ALTER TABLE public.tasks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.expenditures ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.documents ENABLE ROW LEVEL SECURITY;
 
--- 5. CREATE SECURITY DEFINER FUNCTIONS
+-- 6. CREATE SECURITY DEFINER FUNCTIONS
 
 CREATE OR REPLACE FUNCTION public.has_role(_role app_role)
 RETURNS boolean
@@ -167,7 +184,7 @@ AS $$
   );
 $$;
 
--- 6. CREATE TRIGGER FUNCTIONS
+-- 7. CREATE TRIGGER FUNCTIONS
 
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS trigger
@@ -200,7 +217,7 @@ BEGIN
 END;
 $$;
 
--- 7. CREATE TRIGGERS
+-- 8. CREATE TRIGGERS
 
 CREATE TRIGGER on_auth_user_created
 AFTER INSERT ON auth.users
@@ -218,7 +235,7 @@ CREATE TRIGGER set_budgets_updated_at
 BEFORE UPDATE ON public.budgets
 FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
 
--- 8. CREATE RLS POLICIES
+-- 9. CREATE RLS POLICIES
 
 -- PROFILES
 CREATE POLICY "Anyone can view profiles" ON public.profiles
@@ -272,7 +289,7 @@ CREATE POLICY "Admins can do everything with documents" ON public.documents
 CREATE POLICY "Members can manage their documents" ON public.documents
   FOR ALL USING (public.is_startup_member(startup_id));
 
--- 9. STORAGE BUCKET
+-- 10. STORAGE BUCKET
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('documents', 'documents', true)
 ON CONFLICT (id) DO NOTHING;
@@ -284,7 +301,7 @@ CREATE POLICY "Authenticated users can upload documents" ON storage.objects
 CREATE POLICY "Users can delete their own documents" ON storage.objects
   FOR DELETE USING (bucket_id = 'documents' AND auth.uid() IS NOT NULL);
 
--- 10. BACKFILL: Create profiles for any existing auth users that don't have one
+-- 11. BACKFILL: Create profiles for any existing auth users that don't have one
 INSERT INTO public.profiles (id, email, full_name)
 SELECT id, email, COALESCE(raw_user_meta_data->>'full_name', '')
 FROM auth.users
