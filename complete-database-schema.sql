@@ -114,6 +114,9 @@ CREATE INDEX IF NOT EXISTS idx_budgets_approved_by ON public.budgets(approved_by
 CREATE INDEX IF NOT EXISTS idx_budgets_submitted_by ON public.budgets(submitted_by);
 CREATE INDEX IF NOT EXISTS idx_startup_members_startup_id ON public.startup_members(startup_id);
 CREATE INDEX IF NOT EXISTS idx_startup_members_user_id ON public.startup_members(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_startup_members_one_leader_per_startup
+  ON public.startup_members(startup_id)
+  WHERE lower(trim(role)) = 'leader';
 CREATE INDEX IF NOT EXISTS idx_tasks_startup_id ON public.tasks(startup_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_assigned_to ON public.tasks(assigned_to);
 CREATE INDEX IF NOT EXISTS idx_tasks_created_by ON public.tasks(created_by);
