@@ -1,0 +1,78 @@
+import { useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/contexts/AuthContext';
+import { Button } from "@/components/ui/button";
+import { NavLink } from "@/components/NavLink";
+import { Building2, TrendingUp, Users, FolderOpen } from 'lucide-react';
+
+const Index = () => {
+  const { user, role, loading } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!loading && user) {
+      if (role === 'admin') {
+        navigate('/admin');
+      } else {
+        navigate('/dashboard');
+      }
+    }
+  }, [user, role, loading, navigate]);
+
+  if (loading) {
+    return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" /></div>;
+  }
+
+  return (
+    <div className="min-h-screen bg-background overflow-hidden">
+      {/* Hero */}
+      <div className="container mx-auto px-4 py-20">
+        <div className="text-center max-w-3xl mx-auto">
+          <div className="inline-flex items-center justify-center h-16 w-16 rounded-2xl bg-primary mb-6 animate-fade-in">
+            <Building2 className="h-8 w-8 text-primary-foreground" />
+          </div>
+          <h1 className="mb-4 text-5xl font-bold tracking-tight animate-fade-in" style={{ animationDelay: '0.1s', animationFillMode: 'both' }}>
+            Startup Incubator
+          </h1>
+          <p className="mb-8 text-xl text-muted-foreground animate-fade-in" style={{ animationDelay: '0.2s', animationFillMode: 'both' }}>
+            Manage your startup journey with ease — track milestones, expenditures, documents, and grants.
+          </p>
+          <div className="flex items-center justify-center gap-4 animate-fade-in" style={{ animationDelay: '0.3s', animationFillMode: 'both' }}>
+            <Button size="lg" asChild>
+              <NavLink to="/auth">Get Started</NavLink>
+            </Button>
+            <Button size="lg" variant="outline" asChild>
+              <NavLink to="/auth">Login</NavLink>
+            </Button>
+          </div>
+        </div>
+
+        {/* Feature cards */}
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4 mt-20 max-w-5xl mx-auto">
+          {[
+            { icon: TrendingUp, title: 'Track Progress', desc: 'Monitor milestones across SDLC phases' },
+            { icon: FolderOpen, title: 'Manage Documents', desc: 'Upload and share project deliverables' },
+            { icon: Users, title: 'Team Collaboration', desc: 'Work together with real-time chat' },
+            { icon: Building2, title: 'Budget Control', desc: 'Submit budgets and track expenditures' },
+          ].map((item, i) => (
+            <div
+              key={item.title}
+              className="p-6 rounded-xl border bg-card hover:shadow-md transition-shadow animate-fade-in"
+              style={{ animationDelay: `${0.4 + i * 0.1}s`, animationFillMode: 'both' }}
+            >
+              <item.icon className="h-8 w-8 text-primary mb-3" />
+              <h3 className="font-semibold mb-1">{item.title}</h3>
+              <p className="text-sm text-muted-foreground">{item.desc}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <footer className="border-t bg-card py-6 mt-12">
+        <div className="container text-center text-sm text-muted-foreground">© 2026 Startup Grant Portal. All rights reserved.</div>
+      </footer>
+    </div>
+  );
+};
+
+export default Index;
