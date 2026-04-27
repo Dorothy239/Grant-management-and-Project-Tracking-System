@@ -121,14 +121,6 @@ CREATE TABLE public.messages (
   created_at timestamptz DEFAULT now() NOT NULL
 );
 
--- 4. ADD SOFT-DELETE COLUMNS FOR EXISTING TABLES
-ALTER TABLE public.tasks ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
-ALTER TABLE public.tasks ADD COLUMN IF NOT EXISTS deleted_by uuid REFERENCES auth.users(id) ON DELETE SET NULL;
-ALTER TABLE public.expenditures ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
-ALTER TABLE public.expenditures ADD COLUMN IF NOT EXISTS deleted_by uuid REFERENCES auth.users(id) ON DELETE SET NULL;
-ALTER TABLE public.documents ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
-ALTER TABLE public.documents ADD COLUMN IF NOT EXISTS deleted_by uuid REFERENCES auth.users(id) ON DELETE SET NULL;
-
 -- 5. ENABLE RLS ON ALL TABLES
 CREATE INDEX IF NOT EXISTS idx_budgets_startup_id ON public.budgets(startup_id);
 CREATE INDEX IF NOT EXISTS idx_budgets_approved_by ON public.budgets(approved_by);
