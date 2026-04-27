@@ -113,6 +113,13 @@ CREATE TABLE public.documents (
   deleted_by uuid REFERENCES auth.users(id) ON DELETE SET NULL,
   created_at timestamptz DEFAULT now() NOT NULL
 );
+CREATE TABLE public.messages (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  startup_id uuid REFERENCES public.startups(id) ON DELETE CASCADE NOT NULL,
+  user_id uuid REFERENCES auth.users(id) ON DELETE SET NULL,
+  content text NOT NULL,
+  created_at timestamptz DEFAULT now() NOT NULL
+);
 
 -- 4. ADD SOFT-DELETE COLUMNS FOR EXISTING TABLES
 ALTER TABLE public.tasks ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
