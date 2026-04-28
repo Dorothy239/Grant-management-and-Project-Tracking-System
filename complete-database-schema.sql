@@ -288,3 +288,6 @@ END IF;
 
 -- =====================================================
 created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
+
+-- =====================================================
+USING (auth.uid() = id OR public.has_role('admin'))
