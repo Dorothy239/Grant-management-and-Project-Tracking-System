@@ -291,3 +291,7 @@ created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
 
 -- =====================================================
 USING (auth.uid() = id OR public.has_role('admin'))
+
+-- =====================================================
+ALTER TABLE public.startup_members
+ADD CONSTRAINT unique_membership UNIQUE (startup_id, user_id);
