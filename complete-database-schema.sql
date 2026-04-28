@@ -282,3 +282,6 @@ WITH CHECK (public.is_startup_member(startup_id));
 -- =====================================================
 -- 
 -- =====================================================
+IF row(NEW.*) IS DISTINCT FROM row(OLD.*) THEN
+  NEW.updated_at = now();
+END IF;
