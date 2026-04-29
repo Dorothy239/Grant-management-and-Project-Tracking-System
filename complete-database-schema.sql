@@ -246,8 +246,6 @@ CREATE POLICY "view own roles" ON public.user_roles
 FOR SELECT USING (auth.uid() = user_id);
 
 -- STARTUPS
-CREATE POLICY "admin startups full access" ON public.startups
-FOR ALL USING (public.has_role('admin')) WITH CHECK (public.has_role('admin'));
 
 CREATE POLICY "authenticated can view startups" ON public.startups
 FOR SELECT USING (auth.uid() IS NOT NULL);
