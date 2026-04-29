@@ -11,48 +11,89 @@ import {
 import { supabase } from '@/integrations/supabase/client';
 import { formatNaira } from '@/lib/currency';
 
+type PendingBudget = {
+  name: string;
+  amount: number;
+  startupId: string;
+};
+
 export default function AdminDashboard() {
   const { user, role, loading } = useAuth();
   const navigate = useNavigate();
-  const [stats, setStats] = useState({ teams: 0, activeTeams: 0, totalGrants: 0, totalMembers: 0, pendingBudgets: 0, totalTasks: 0, completedTasks: 0 });
+
+  const [stats, setStats] = useState({
+    teams: 0,
+    activeTeams: 0,
+    totalGrants: 0,
+    totalMembers: 0,
+    pendingBudgets: 0,
+    totalTasks: 0,
+    completedTasks: 0,
+  });
+
   const [loadingData, setLoadingData] = useState(true);
-  const [pendingBudgetTeams, setPendingBudgetTeams] = useState<{ name: string; amount: number; startupId: string }[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [pendingBudgetTeams, setPendingBudgetTeams] = useState<PendingBudget[]>([]);
 
   useEffect(() => {
-    if (!loading && !user) navigate('/auth');
-    if (!loading && role === 'student') navigate('/dashboard');
-    if (user && role === 'admin') fetchStats();
-  }, [user, role, loading]);
+    if (loading) return;
+
+    if (!user) {
+      navigate('/auth');
+      return;
+    }
+
+    if (role === 'student') {
+      navigate('/dashboard');
+      return;
+    }
+
+    if (role === 'admin') {
+      fetchStats();
+    }
+  }, [user, role, loading, navigate]);
 
   const fetchStats = async () => {
     try {
+      setError(null);
+
       const [startupsRes, membersRes, budgetsRes, tasksRes] = await Promise.all([
         supabase.from('startups').select('id, name, is_active, grant_amount'),
         supabase.from('startup_members').select('id'),
         supabase.from('budgets').select('startup_id, total_amount, status, startups(name)'),
         supabase.from('tasks').select('status'),
       ]);
-      const startups = startupsRes.data || [];
-      const budgets = budgetsRes.data || [];
-      const tasks = tasksRes.data || [];
-      const pending = budgets.filter((b: any) => b.status === 'pending');
+
+      if (startupsRes.error || membersRes.error || budgetsRes.error || tasksRes.error) {
+        throw new Error('Failed to fetch dashboard data');
+      }
+
+      const startups = startupsRes.data ?? [];
+      const budgets = budgetsRes.data ?? [];
+      const tasks = tasksRes.data ?? [];
+
+      const pending = budgets.filter((b) => b.status === 'pending');
 
       setStats({
         teams: startups.length,
-        activeTeams: startups.filter(s => s.is_active).length,
-        totalGrants: startups.reduce((s, t) => s + Number(t.grant_amount), 0),
-        totalMembers: (membersRes.data || []).length,
+        activeTeams: startups.filter((s) => s.is_active).length,
+        totalGrants: startups.reduce((sum, t) => sum + Number(t.grant_amount ?? 0), 0),
+        totalMembers: membersRes.data?.length ?? 0,
         pendingBudgets: pending.length,
         totalTasks: tasks.length,
-        completedTasks: tasks.filter(t => t.status === 'completed').length,
+        completedTasks: tasks.filter((t) => t.status === 'completed').length,
       });
-      setPendingBudgetTeams(pending.map((b: any) => ({
-        name: (b as any).startups?.name || 'Unknown',
-        amount: Number(b.total_amount),
-        startupId: b.startup_id,
-      })));
-    } catch (error) {
-      console.error(error);
+
+      setPendingBudgetTeams(
+        pending.map((b) => ({
+          name: b.startups?.name ?? 'Unknown',
+          amount: Number(b.total_amount ?? 0),
+          startupId: b.startup_id,
+        }))
+      );
+    } catch (err) {
+      console.error(err);
+      setError('Unable to load dashboard data');
     } finally {
       setLoadingData(false);
     }
@@ -68,26 +109,90 @@ export default function AdminDashboard() {
     );
   }
 
+  if (error) {
+    return (
+      <DashboardLayout>
+        <div className="text-center py-10 text-red-500">{error}</div>
+      </DashboardLayout>
+    );
+  }
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Admin Dashboard</h1>
-          <p className="text-muted-foreground">Manage teams, review budgets, and track progress</p>
+          <p className="text-muted-foreground">
+            Manage teams, review budgets, and track progress
+          </p>
         </div>
 
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium">Total Teams</CardTitle><Building2 className="h-4 w-4 text-muted-foreground" /></CardHeader><CardContent><div className="text-2xl font-bold">{stats.teams}</div><p className="text-xs text-muted-foreground">{stats.activeTeams} active</p></CardContent></Card>
-          <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium">Grants Allocated</CardTitle><DollarSign className="h-4 w-4 text-muted-foreground" /></CardHeader><CardContent><div className="text-2xl font-bold">{formatNaira(stats.totalGrants)}</div><p className="text-xs text-muted-foreground">Total funding</p></CardContent></Card>
-          <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium">Task Progress</CardTitle><TrendingUp className="h-4 w-4 text-muted-foreground" /></CardHeader><CardContent><div className="text-2xl font-bold">{stats.totalTasks > 0 ? `${((stats.completedTasks / stats.totalTasks) * 100).toFixed(0)}%` : '0%'}</div><p className="text-xs text-muted-foreground">{stats.completedTasks}/{stats.totalTasks} tasks done</p></CardContent></Card>
-          <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium">Pending Budgets</CardTitle><Clock className="h-4 w-4 text-warning" /></CardHeader><CardContent><div className="text-2xl font-bold">{stats.pendingBudgets}</div><p className="text-xs text-muted-foreground">Awaiting review</p></CardContent></Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium">Total Teams</CardTitle>
+              <Building2 className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{stats.teams}</div>
+              <p className="text-xs text-muted-foreground">
+                {stats.activeTeams} active
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium">Grants Allocated</CardTitle>
+              <DollarSign className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">
+                {formatNaira(stats.totalGrants)}
+              </div>
+              <p className="text-xs text-muted-foreground">Total funding</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium">Task Progress</CardTitle>
+              <TrendingUp className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">
+                {stats.totalTasks > 0
+                  ? `${((stats.completedTasks / stats.totalTasks) * 100).toFixed(0)}%`
+                  : '0%'}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {stats.completedTasks}/{stats.totalTasks} tasks done
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium">Pending Budgets</CardTitle>
+              <Clock className="h-4 w-4 text-warning" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{stats.pendingBudgets}</div>
+              <p className="text-xs text-muted-foreground">Awaiting review</p>
+            </CardContent>
+          </Card>
         </div>
 
         <div className="grid gap-6 lg:grid-cols-2">
-          {pendingBudgetTeams.length > 0 && (
-            <Card>
-              <CardHeader><CardTitle>Pending Budget Reviews</CardTitle><CardDescription>Teams waiting for budget approval</CardDescription></CardHeader>
-              <CardContent>
+          <Card>
+            <CardHeader>
+              <CardTitle>Pending Budget Reviews</CardTitle>
+              <CardDescription>Teams waiting for budget approval</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {pendingBudgetTeams.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No pending budgets 🎉</p>
+              ) : (
                 <div className="space-y-3">
                   {pendingBudgetTeams.map((t, i) => (
                     <div
@@ -97,8 +202,14 @@ export default function AdminDashboard() {
                     >
                       <div className="flex items-center gap-3">
                         <AlertTriangle className="h-5 w-5 text-warning" />
-                        <div><p className="text-sm font-medium">{t.name}</p><p className="text-xs text-muted-foreground">{formatNaira(t.amount)} requested</p></div>
+                        <div>
+                          <p className="text-sm font-medium">{t.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {formatNaira(t.amount)} requested
+                          </p>
+                        </div>
                       </div>
+
                       <div className="flex items-center gap-2">
                         <Badge variant="secondary">Pending</Badge>
                         <ArrowRight className="h-4 w-4 text-muted-foreground" />
@@ -106,16 +217,29 @@ export default function AdminDashboard() {
                     </div>
                   ))}
                 </div>
-              </CardContent>
-            </Card>
-          )}
+              )}
+            </CardContent>
+          </Card>
 
           <Card>
-            <CardHeader><CardTitle>Quick Actions</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle>Quick Actions</CardTitle>
+            </CardHeader>
             <CardContent className="flex flex-wrap gap-3">
-              <Button onClick={() => navigate('/admin/startups')}><Building2 className="mr-2 h-4 w-4" />Create Team</Button>
-              <Button variant="outline" onClick={() => navigate('/admin/reports')}><TrendingUp className="mr-2 h-4 w-4" />View Reports</Button>
-              <Button variant="outline" onClick={() => navigate('/admin/users')}><Users className="mr-2 h-4 w-4" />Manage Users</Button>
+              <Button onClick={() => navigate('/admin/startups')}>
+                <Building2 className="mr-2 h-4 w-4" />
+                Create Team
+              </Button>
+
+              <Button variant="outline" onClick={() => navigate('/admin/reports')}>
+                <TrendingUp className="mr-2 h-4 w-4" />
+                View Reports
+              </Button>
+
+              <Button variant="outline" onClick={() => navigate('/admin/users')}>
+                <Users className="mr-2 h-4 w-4" />
+                Manage Users
+              </Button>
             </CardContent>
           </Card>
         </div>
