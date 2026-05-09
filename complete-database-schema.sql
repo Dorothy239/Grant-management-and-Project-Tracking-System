@@ -155,6 +155,90 @@ CREATE TABLE public.messages (
   created_at timestamptz DEFAULT now() NOT NULL
 );
 
+-- =====================================================
+-- 3. REPORTING VIEWS
+-- =====================================================
+
+CREATE OR REPLACE VIEW public.startup_budget_summary AS
+SELECT
+  s.id AS startup_id,
+  s.name AS startup_name,
+  s.grant_amount,
+  b.id AS budget_id,
+  b.total_amount AS budget_total_amount,
+  b.status AS budget_status,
+  COALESCE(SUM(e.amount) FILTER (WHERE e.deleted_at IS NULL), 0)::numeric(12,2) AS total_spent,
+  (COALESCE(b.total_amount, 0) - COALESCE(SUM(e.amount) FILTER (WHERE e.deleted_at IS NULL), 0))::numeric(12,2) AS budget_remaining,
+  (s.grant_amount - COALESCE(SUM(e.amount) FILTER (WHERE e.deleted_at IS NULL), 0))::numeric(12,2) AS grant_remaining,
+  COUNT(e.id) FILTER (WHERE e.deleted_at IS NULL) AS expenditure_count
+FROM public.startups s
+LEFT JOIN public.budgets b ON b.startup_id = s.id AND b.deleted_at IS NULL
+LEFT JOIN public.expenditures e ON e.startup_id = s.id
+WHERE s.deleted_at IS NULL
+GROUP BY s.id, s.name, s.grant_amount, b.id, b.total_amount, b.status;
+
+CREATE OR REPLACE VIEW public.startup_task_progress_summary AS
+SELECT
+  s.id AS startup_id,
+  s.name AS startup_name,
+  COUNT(t.id) FILTER (WHERE t.deleted_at IS NULL) AS total_tasks,
+  COUNT(t.id) FILTER (WHERE t.deleted_at IS NULL AND t.status = 'todo') AS todo_tasks,
+  COUNT(t.id) FILTER (WHERE t.deleted_at IS NULL AND t.status = 'in_progress') AS in_progress_tasks,
+  COUNT(t.id) FILTER (WHERE t.deleted_at IS NULL AND t.status = 'completed') AS completed_tasks,
+  CASE
+    WHEN COUNT(t.id) FILTER (WHERE t.deleted_at IS NULL) = 0 THEN 0
+    ELSE ROUND(
+      (
+        COUNT(t.id) FILTER (WHERE t.deleted_at IS NULL AND t.status = 'completed')::numeric
+        / COUNT(t.id) FILTER (WHERE t.deleted_at IS NULL)::numeric
+      ) * 100,
+      2
+    )
+  END AS completion_percentage
+FROM public.startups s
+LEFT JOIN public.tasks t ON t.startup_id = s.id
+WHERE s.deleted_at IS NULL
+GROUP BY s.id, s.name;
+
+CREATE OR REPLACE VIEW public.startup_overview_summary AS
+SELECT
+  s.id AS startup_id,
+  s.name AS startup_name,
+  s.is_active,
+  s.grant_amount,
+  COALESCE(b.total_amount, 0)::numeric(12,2) AS budget_total_amount,
+  COALESCE(exp.total_spent, 0)::numeric(12,2) AS total_spent,
+  (s.grant_amount - COALESCE(exp.total_spent, 0))::numeric(12,2) AS grant_remaining,
+  COALESCE(task_counts.total_tasks, 0) AS total_tasks,
+  COALESCE(task_counts.completed_tasks, 0) AS completed_tasks,
+  COALESCE(doc_counts.total_documents, 0) AS total_documents
+FROM public.startups s
+LEFT JOIN public.budgets b
+  ON b.startup_id = s.id
+  AND b.deleted_at IS NULL
+LEFT JOIN (
+  SELECT startup_id, COALESCE(SUM(amount), 0) AS total_spent
+  FROM public.expenditures
+  WHERE deleted_at IS NULL
+  GROUP BY startup_id
+) exp ON exp.startup_id = s.id
+LEFT JOIN (
+  SELECT
+    startup_id,
+    COUNT(*) AS total_tasks,
+    COUNT(*) FILTER (WHERE status = 'completed') AS completed_tasks
+  FROM public.tasks
+  WHERE deleted_at IS NULL
+  GROUP BY startup_id
+) task_counts ON task_counts.startup_id = s.id
+LEFT JOIN (
+  SELECT startup_id, COUNT(*) AS total_documents
+  FROM public.documents
+  WHERE deleted_at IS NULL
+  GROUP BY startup_id
+) doc_counts ON doc_counts.startup_id = s.id
+WHERE s.deleted_at IS NULL;
+
 -- AUDIT LOGS
 CREATE TABLE public.audit_logs (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
