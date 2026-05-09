@@ -99,6 +99,14 @@ CREATE TABLE public.task_comments (
   created_at timestamptz DEFAULT now()
 );
 
+-- Expenditure categories table
+CREATE TABLE public.expenditure_categories (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name text NOT NULL UNIQUE,
+  description text,
+  created_at timestamptz DEFAULT now() NOT NULL
+);
+
 -- EXPENDITURES
 CREATE TABLE public.expenditures (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -106,6 +114,7 @@ CREATE TABLE public.expenditures (
   title text NOT NULL,
   description text,
   amount numeric(12,2) NOT NULL CHECK (amount > 0),
+  category_id uuid REFERENCES public.expenditure_categories(id) ON DELETE RESTRICT,
   category text NOT NULL,
   phase text,
   receipt_url text,
@@ -200,12 +209,60 @@ WHERE role = 'leader';
 -- 4. RLS ENABLE
 -- =====================================================
 
+-- 4. ADD SOFT-DELETE COLUMNS FOR EXISTING TABLES
+ALTER TABLE public.expenditures
+  ADD COLUMN IF NOT EXISTS category_id uuid REFERENCES public.expenditure_categories(id) ON DELETE RESTRICT;
+
+INSERT INTO public.expenditure_categories (name)
+SELECT DISTINCT trim(category)
+FROM public.expenditures
+WHERE category IS NOT NULL
+  AND trim(category) <> ''
+ON CONFLICT (name) DO NOTHING;
+
+UPDATE public.expenditures e
+SET category_id = c.id
+FROM public.expenditure_categories c
+WHERE e.category_id IS NULL
+  AND trim(e.category) = c.name;
+
+ALTER TABLE public.tasks ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
+ALTER TABLE public.tasks ADD COLUMN IF NOT EXISTS deleted_by uuid REFERENCES auth.users(id) ON DELETE SET NULL;
+ALTER TABLE public.expenditures ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
+ALTER TABLE public.expenditures ADD COLUMN IF NOT EXISTS deleted_by uuid REFERENCES auth.users(id) ON DELETE SET NULL;
+ALTER TABLE public.documents ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
+ALTER TABLE public.documents ADD COLUMN IF NOT EXISTS deleted_by uuid REFERENCES auth.users(id) ON DELETE SET NULL;
+
+-- 5. ENABLE RLS ON ALL TABLES
+CREATE INDEX IF NOT EXISTS idx_budgets_startup_id ON public.budgets(startup_id);
+CREATE INDEX IF NOT EXISTS idx_budgets_approved_by ON public.budgets(approved_by);
+CREATE INDEX IF NOT EXISTS idx_budgets_submitted_by ON public.budgets(submitted_by);
+CREATE INDEX IF NOT EXISTS idx_startup_members_startup_id ON public.startup_members(startup_id);
+CREATE INDEX IF NOT EXISTS idx_startup_members_user_id ON public.startup_members(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_startup_members_one_leader_per_startup
+  ON public.startup_members(startup_id)
+  WHERE lower(trim(role)) = 'leader';
+CREATE INDEX IF NOT EXISTS idx_tasks_startup_id ON public.tasks(startup_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_assigned_to ON public.tasks(assigned_to);
+CREATE INDEX IF NOT EXISTS idx_tasks_created_by ON public.tasks(created_by);
+CREATE INDEX IF NOT EXISTS idx_tasks_deleted_at ON public.tasks(deleted_at);
+CREATE INDEX IF NOT EXISTS idx_expenditure_categories_name ON public.expenditure_categories(name);
+CREATE INDEX IF NOT EXISTS idx_expenditures_startup_id ON public.expenditures(startup_id);
+CREATE INDEX IF NOT EXISTS idx_expenditures_category_id ON public.expenditures(category_id);
+CREATE INDEX IF NOT EXISTS idx_expenditures_created_by ON public.expenditures(created_by);
+CREATE INDEX IF NOT EXISTS idx_expenditures_deleted_at ON public.expenditures(deleted_at);
+CREATE INDEX IF NOT EXISTS idx_documents_startup_id ON public.documents(startup_id);
+CREATE INDEX IF NOT EXISTS idx_documents_uploaded_by ON public.documents(uploaded_by);
+CREATE INDEX IF NOT EXISTS idx_documents_deleted_at ON public.documents(deleted_at);
+CREATE INDEX IF NOT EXISTS idx_messages_startup_id_created_at ON public.messages(startup_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_messages_user_id ON public.messages(user_id);
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.user_roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.startups ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.startup_members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.budgets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.tasks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.expenditure_categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.expenditures ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.documents ENABLE ROW LEVEL SECURITY;
 
@@ -329,6 +386,12 @@ FOR ALL USING (public.is_startup_member(startup_id));
 
 CREATE POLICY "member tasks" ON public.tasks
 FOR ALL USING (public.is_startup_member(startup_id));
+
+-- EXPENDITURE_CATEGORIES
+CREATE POLICY "Admins can do everything with expenditure categories" ON public.expenditure_categories
+  FOR ALL USING (public.has_role('admin'));
+CREATE POLICY "Authenticated users can view expenditure categories" ON public.expenditure_categories
+  FOR SELECT USING (auth.uid() IS NOT NULL);
 
 CREATE POLICY "member expenditures" ON public.expenditures
 FOR ALL USING (public.is_startup_member(startup_id));
