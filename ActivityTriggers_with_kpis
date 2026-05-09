@@ -1,0 +1,101 @@
+-- Run this migration in the Supabase SQL Editor.
+-- It (1) ensures the kpis table & enums exist (idempotent re-run of the prior migration,
+-- so the Admin Team Detail page no longer breaks when KPIs aren't installed) and
+-- (2) installs database triggers that automatically log every insert/update/delete
+-- on tasks, expenditures, kpis, documents, budgets and startup_members into activity_log.
+
+-- ---------- Ensure KPI + recurring tables exist (safe to re-run) ----------
+CREATE TABLE IF NOT EXISTS public.kpis (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  startup_id uuid REFERENCES public.startups(id) ON DELETE CASCADE NOT NULL,
+  name text NOT NULL,
+  description text,
+  unit text,
+  target_value numeric(14,2) NOT NULL DEFAULT 0,
+  current_value numeric(14,2) NOT NULL DEFAULT 0,
+  category text DEFAULT 'impact',
+  created_by uuid REFERENCES auth.users(id) ON DELETE SET NULL,
+  created_at timestamptz DEFAULT now() NOT NULL,
+  updated_at timestamptz DEFAULT now() NOT NULL
+);
+ALTER TABLE public.kpis ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Admins manage kpis" ON public.kpis;
+DROP POLICY IF EXISTS "Members manage their kpis" ON public.kpis;
+CREATE POLICY "Admins manage kpis" ON public.kpis FOR ALL USING (public.has_role('admin'));
+CREATE POLICY "Members manage their kpis" ON public.kpis FOR ALL USING (public.is_startup_member(startup_id));
+
+-- ---------- Generic activity logger ----------
+CREATE OR REPLACE FUNCTION public.log_activity_trigger()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_user uuid := auth.uid();
+  v_startup uuid;
+  v_entity text := TG_TABLE_NAME;
+  v_entity_id uuid;
+  v_action text;
+  v_rec_json jsonb;
+  v_title text;
+  v_details jsonb;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    v_rec_json := to_jsonb(OLD);
+  ELSE
+    v_rec_json := to_jsonb(NEW);
+  END IF;
+
+  v_startup := NULLIF(v_rec_json ->> 'startup_id', '')::uuid;
+  v_entity_id := NULLIF(v_rec_json ->> 'id', '')::uuid;
+  v_title := COALESCE(v_rec_json ->> 'title', v_rec_json ->> 'name');
+
+  IF TG_OP = 'INSERT' THEN
+    IF v_entity = 'tasks' THEN v_action := 'created task';
+    ELSIF v_entity = 'expenditures' THEN v_action := 'recorded expense';
+    ELSIF v_entity = 'kpis' THEN v_action := 'added KPI';
+    ELSIF v_entity = 'documents' THEN v_action := 'uploaded document';
+    ELSIF v_entity = 'budgets' THEN v_action := 'submitted budget';
+    ELSIF v_entity = 'startup_members' THEN v_action := 'joined the team';
+    ELSE v_action := 'created ' || v_entity; END IF;
+  ELSIF TG_OP = 'UPDATE' THEN
+    IF v_entity = 'tasks' AND (to_jsonb(OLD) ->> 'status') IS DISTINCT FROM (to_jsonb(NEW) ->> 'status') THEN
+      v_action := 'marked task as ' || replace(NEW.status::text, '_', ' ');
+    ELSIF v_entity = 'budgets' AND (to_jsonb(OLD) ->> 'status') IS DISTINCT FROM (to_jsonb(NEW) ->> 'status') THEN
+      v_action := 'budget ' || NEW.status::text;
+    ELSE
+      v_action := 'updated ' || v_entity;
+    END IF;
+  ELSE
+    IF v_entity = 'tasks' THEN v_action := 'deleted task';
+    ELSIF v_entity = 'expenditures' THEN v_action := 'deleted expense';
+    ELSIF v_entity = 'kpis' THEN v_action := 'deleted KPI';
+    ELSIF v_entity = 'documents' THEN v_action := 'deleted document';
+    ELSIF v_entity = 'startup_members' THEN v_action := 'left the team';
+    ELSE v_action := 'deleted ' || v_entity; END IF;
+  END IF;
+
+  v_details := CASE WHEN v_title IS NOT NULL THEN jsonb_build_object('title', v_title) ELSE '{}'::jsonb END;
+
+  IF v_startup IS NOT NULL THEN
+    INSERT INTO public.activity_log(startup_id, user_id, action, entity_type, entity_id, details)
+    VALUES (v_startup, v_user, v_action, v_entity, v_entity_id, v_details);
+  END IF;
+
+  IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+END;
+$$;
+
+-- ---------- Attach triggers to mutation tables ----------
+DO $$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['tasks','expenditures','kpis','documents','budgets','startup_members']
+  LOOP
+    EXECUTE format('DROP TRIGGER IF EXISTS trg_log_activity ON public.%I;', t);
+    EXECUTE format(
+      'CREATE TRIGGER trg_log_activity AFTER INSERT OR UPDATE OR DELETE ON public.%I
+         FOR EACH ROW EXECUTE FUNCTION public.log_activity_trigger();', t);
+  END LOOP;
+END $$;
