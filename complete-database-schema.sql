@@ -69,6 +69,11 @@ CREATE TABLE public.budgets (
   deleted_at timestamptz,
   created_at timestamptz DEFAULT now() NOT NULL,
   updated_at timestamptz DEFAULT now() NOT NULL,
+  CHECK (
+    (status = 'approved' AND approved_by IS NOT NULL AND approved_at IS NOT NULL)
+    OR
+    (status <> 'approved' AND approved_by IS NULL AND approved_at IS NULL)
+  ),
   UNIQUE (startup_id)
 );
 
@@ -210,6 +215,23 @@ WHERE role = 'leader';
 -- =====================================================
 
 -- 4. ADD SOFT-DELETE COLUMNS FOR EXISTING TABLES
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'budgets_approval_fields_match_status'
+  ) THEN
+    ALTER TABLE public.budgets
+      ADD CONSTRAINT budgets_approval_fields_match_status
+      CHECK (
+        (status = 'approved' AND approved_by IS NOT NULL AND approved_at IS NOT NULL)
+        OR
+        (status <> 'approved' AND approved_by IS NULL AND approved_at IS NULL)
+      );
+  END IF;
+END $$;
+
 ALTER TABLE public.expenditures
   ADD COLUMN IF NOT EXISTS category_id uuid REFERENCES public.expenditure_categories(id) ON DELETE RESTRICT;
 
