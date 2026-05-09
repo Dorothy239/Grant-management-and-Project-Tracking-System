@@ -1,0 +1,53 @@
+-- Run this in Supabase SQL Editor to add KPI tracking and recurring task templates.
+
+CREATE TABLE IF NOT EXISTS public.kpis (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  startup_id uuid REFERENCES public.startups(id) ON DELETE CASCADE NOT NULL,
+  name text NOT NULL,
+  description text,
+  unit text,
+  target_value numeric(14,2) NOT NULL DEFAULT 0,
+  current_value numeric(14,2) NOT NULL DEFAULT 0,
+  category text DEFAULT 'impact',
+  created_by uuid REFERENCES auth.users(id) ON DELETE SET NULL,
+  created_at timestamptz DEFAULT now() NOT NULL,
+  updated_at timestamptz DEFAULT now() NOT NULL
+);
+
+ALTER TABLE public.kpis ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Admins manage kpis" ON public.kpis;
+DROP POLICY IF EXISTS "Members manage their kpis" ON public.kpis;
+CREATE POLICY "Admins manage kpis" ON public.kpis FOR ALL USING (public.has_role('admin'));
+CREATE POLICY "Members manage their kpis" ON public.kpis FOR ALL USING (public.is_startup_member(startup_id));
+
+DROP TRIGGER IF EXISTS set_kpis_updated_at ON public.kpis;
+CREATE TRIGGER set_kpis_updated_at BEFORE UPDATE ON public.kpis
+  FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+
+CREATE TABLE IF NOT EXISTS public.recurring_task_templates (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  startup_id uuid REFERENCES public.startups(id) ON DELETE CASCADE NOT NULL,
+  title text NOT NULL,
+  description text,
+  phase text NOT NULL DEFAULT 'Reporting',
+  priority public.task_priority NOT NULL DEFAULT 'medium',
+  assigned_to uuid REFERENCES auth.users(id) ON DELETE SET NULL,
+  cadence_days integer NOT NULL DEFAULT 30,
+  next_run_date date NOT NULL DEFAULT (now()::date),
+  is_active boolean NOT NULL DEFAULT true,
+  created_by uuid REFERENCES auth.users(id) ON DELETE SET NULL NOT NULL,
+  created_at timestamptz DEFAULT now() NOT NULL,
+  updated_at timestamptz DEFAULT now() NOT NULL
+);
+
+ALTER TABLE public.recurring_task_templates ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Admins manage recurring templates" ON public.recurring_task_templates;
+DROP POLICY IF EXISTS "Members manage their recurring templates" ON public.recurring_task_templates;
+CREATE POLICY "Admins manage recurring templates" ON public.recurring_task_templates FOR ALL USING (public.has_role('admin'));
+CREATE POLICY "Members manage their recurring templates" ON public.recurring_task_templates FOR ALL USING (public.is_startup_member(startup_id));
+
+DROP TRIGGER IF EXISTS set_recurring_task_templates_updated_at ON public.recurring_task_templates;
+CREATE TRIGGER set_recurring_task_templates_updated_at BEFORE UPDATE ON public.recurring_task_templates
+  FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
