@@ -1,0 +1,58 @@
+-- =====================================================================
+-- MFA preferences + NDPA compliance audit tables
+-- =====================================================================
+-- Stores whether each user has opted into Multi-Factor Authentication.
+-- Admins are enforced in application code regardless of this flag;
+-- students can toggle it on/off here.
+create table if not exists public.user_mfa_preferences (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  mfa_enabled boolean not null default false,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.user_mfa_preferences enable row level security;
+
+-- A user can read & update only their own preference row.
+drop policy if exists "mfa_pref_self_select" on public.user_mfa_preferences;
+create policy "mfa_pref_self_select" on public.user_mfa_preferences
+  for select using (auth.uid() = user_id);
+drop policy if exists "mfa_pref_self_upsert" on public.user_mfa_preferences;
+create policy "mfa_pref_self_upsert" on public.user_mfa_preferences
+  for insert with check (auth.uid() = user_id);
+drop policy if exists "mfa_pref_self_update" on public.user_mfa_preferences;
+create policy "mfa_pref_self_update" on public.user_mfa_preferences
+  for update using (auth.uid() = user_id);
+
+-- ---------------------------------------------------------------------
+-- NDPA: data subject access request log. Every export / deletion
+-- request a user makes is recorded here so administrators can prove
+-- the system honoured the user's data-rights requests.
+-- ---------------------------------------------------------------------
+do $$ begin
+  create type public.data_request_kind as enum ('export','deletion','rectification');
+exception when duplicate_object then null; end $$;
+do $$ begin
+  create type public.data_request_status as enum ('pending','completed','rejected');
+exception when duplicate_object then null; end $$;
+
+create table if not exists public.data_subject_requests (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  kind public.data_request_kind not null,
+  status public.data_request_status not null default 'pending',
+  details text,
+  created_at timestamptz not null default now(),
+  resolved_at timestamptz
+);
+
+alter table public.data_subject_requests enable row level security;
+
+drop policy if exists "dsr_self_select" on public.data_subject_requests;
+create policy "dsr_self_select" on public.data_subject_requests
+  for select using (auth.uid() = user_id or public.has_role(auth.uid(),'admin'));
+drop policy if exists "dsr_self_insert" on public.data_subject_requests;
+create policy "dsr_self_insert" on public.data_subject_requests
+  for insert with check (auth.uid() = user_id);
+drop policy if exists "dsr_admin_update" on public.data_subject_requests;
+create policy "dsr_admin_update" on public.data_subject_requests
+  for update using (public.has_role(auth.uid(),'admin'));
