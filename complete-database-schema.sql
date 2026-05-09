@@ -302,6 +302,36 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+CREATE OR REPLACE FUNCTION public.enforce_budget_status_transition()
+RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' AND NEW.status IS DISTINCT FROM OLD.status THEN
+    IF OLD.status = 'rejected' AND NEW.status = 'approved' THEN
+      RAISE EXCEPTION 'Rejected budgets cannot move directly to approved. Move them through pending first.';
+    END IF;
+
+    IF OLD.status = 'approved' AND NEW.status <> 'approved' THEN
+      RAISE EXCEPTION 'Approved budgets cannot transition back to another status.';
+    END IF;
+  END IF;
+
+  IF NEW.status = 'approved' THEN
+    IF NEW.approved_by IS NULL THEN
+      RAISE EXCEPTION 'approved_by is required when status is approved.';
+    END IF;
+
+    IF NEW.approved_at IS NULL THEN
+      NEW.approved_at = now();
+    END IF;
+  ELSE
+    NEW.approved_by = NULL;
+    NEW.approved_at = NULL;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS trigger AS $$
 BEGIN
@@ -357,6 +387,11 @@ CREATE TRIGGER enforce_budget_limit
 BEFORE INSERT ON public.expenditures
 FOR EACH ROW
 EXECUTE FUNCTION public.check_budget_limit();
+
+CREATE TRIGGER enforce_budget_status_transition
+BEFORE INSERT OR UPDATE ON public.budgets
+FOR EACH ROW
+EXECUTE FUNCTION public.enforce_budget_status_transition();
 
 -- =====================================================
 -- 8. RLS POLICIES (FIXED)
