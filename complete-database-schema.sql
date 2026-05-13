@@ -281,6 +281,22 @@ CREATE TABLE public.invites (
   created_at timestamptz DEFAULT now()
 );
 
+-- STARTUP INVITES
+CREATE TABLE public.startup_invites (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  startup_id uuid REFERENCES public.startups(id) ON DELETE CASCADE NOT NULL,
+  invite_code text NOT NULL UNIQUE,
+  invited_email text NOT NULL,
+  created_by uuid REFERENCES auth.users(id) ON DELETE SET NULL NOT NULL,
+  expires_at timestamptz NOT NULL,
+  is_used boolean DEFAULT false NOT NULL,
+  redeemed_at timestamptz,
+  created_at timestamptz DEFAULT now() NOT NULL,
+  updated_at timestamptz DEFAULT now() NOT NULL,
+  CHECK (expires_at > created_at),
+  CHECK (is_used = false OR redeemed_at IS NOT NULL)
+);
+
 -- =====================================================
 -- 3. INDEXES
 -- =====================================================
@@ -347,7 +363,7 @@ CREATE INDEX IF NOT EXISTS idx_startup_members_startup_id ON public.startup_memb
 CREATE INDEX IF NOT EXISTS idx_startup_members_user_id ON public.startup_members(user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_startup_members_one_leader_per_startup
   ON public.startup_members(startup_id)
-  WHERE lower(trim(role)) = 'leader';
+  WHERE role = 'leader';
 CREATE INDEX IF NOT EXISTS idx_tasks_startup_id ON public.tasks(startup_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_assigned_to ON public.tasks(assigned_to);
 CREATE INDEX IF NOT EXISTS idx_tasks_created_by ON public.tasks(created_by);
@@ -362,6 +378,10 @@ CREATE INDEX IF NOT EXISTS idx_documents_uploaded_by ON public.documents(uploade
 CREATE INDEX IF NOT EXISTS idx_documents_deleted_at ON public.documents(deleted_at);
 CREATE INDEX IF NOT EXISTS idx_messages_startup_id_created_at ON public.messages(startup_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_user_id ON public.messages(user_id);
+CREATE INDEX IF NOT EXISTS idx_startup_invites_startup_id ON public.startup_invites(startup_id);
+CREATE INDEX IF NOT EXISTS idx_startup_invites_invite_code ON public.startup_invites(invite_code);
+CREATE INDEX IF NOT EXISTS idx_startup_invites_created_by ON public.startup_invites(created_by);
+CREATE INDEX IF NOT EXISTS idx_startup_invites_expires_at ON public.startup_invites(expires_at);
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.user_roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.startups ENABLE ROW LEVEL SECURITY;
@@ -371,6 +391,7 @@ ALTER TABLE public.tasks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.expenditure_categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.expenditures ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.startup_invites ENABLE ROW LEVEL SECURITY;
 
 -- =====================================================
 -- 5. SECURITY FUNCTIONS
@@ -499,6 +520,11 @@ BEFORE INSERT OR UPDATE ON public.budgets
 FOR EACH ROW
 EXECUTE FUNCTION public.enforce_budget_status_transition();
 
+CREATE TRIGGER handle_updated_at_startup_invites
+BEFORE UPDATE ON public.startup_invites
+FOR EACH ROW
+EXECUTE FUNCTION public.handle_updated_at();
+
 -- =====================================================
 -- 8. RLS POLICIES (FIXED)
 -- =====================================================
@@ -538,4 +564,7 @@ CREATE POLICY "member expenditures" ON public.expenditures
 FOR ALL USING (public.is_startup_member(startup_id));
 
 CREATE POLICY "member documents" ON public.documents
+FOR ALL USING (public.is_startup_member(startup_id));
+
+CREATE POLICY "member startup invites" ON public.startup_invites
 FOR ALL USING (public.is_startup_member(startup_id));
